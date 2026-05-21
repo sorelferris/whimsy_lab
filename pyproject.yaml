@@ -1,0 +1,18 @@
+name: voice-assistant
+version: 0.1.0
+description: 基于唤醒词的语音转文字助手
+author: Your Name
+license: MIT
+requires-python: ">=3.8"
+
+dependencies:
+  - SpeechRecognition>=3.10.0
+  - pyaudio>=0.2.13
+
+scripts:
+  start: python voice_assistant.py
+
+keywords:
+  - speech-to-text
+  - voice-assistant
+  - wake-word
