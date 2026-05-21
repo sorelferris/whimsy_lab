@@ -1,6 +1,6 @@
 name: voice-assistant
 version: 0.1.0
-description: 基于唤醒词的语音转文字助手
+description: 基于唤醒词的语音转文字助手（支持 Windows/Linux/macOS）
 author: Your Name
 license: MIT
 requires-python: ">=3.8"
@@ -16,3 +16,11 @@ keywords:
   - speech-to-text
   - voice-assistant
   - wake-word
+  - windows
+  - linux
+  - macos
+
+classifiers:
+  - Operating System :: Microsoft :: Windows
+  - Operating System :: POSIX :: Linux
+  - Operating System :: MacOS
