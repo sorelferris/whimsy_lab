@@ -73,6 +73,10 @@ class VoiceAssistant:
                 time.sleep(1)
 
 
-if __name__ == "__main__":
+def main():
     assistant = VoiceAssistant(wake_word="你好助手")
     assistant.run()
+
+
+if __name__ == "__main__":
+    main()
