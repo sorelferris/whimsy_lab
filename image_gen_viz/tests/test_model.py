@@ -27,16 +27,36 @@ def test_model_emits_decoded_frames_at_interval(monkeypatch):
     monkeypatch.setattr("image_gen_viz.model.load_pipeline", lambda model_id: fake_pipeline)
     monkeypatch.setattr("image_gen_viz.model.create_scheduler", lambda name, current: current)
     model = StableDiffusionModel(device="cuda")
-    request = GenerationRequest(prompt="a fox", steps=5, decode_interval=2, width=512, height=512)
+    request = GenerationRequest(
+        prompt="a fox",
+        negative_prompt="bad quality",
+        guidance_scale=8.5,
+        steps=5,
+        decode_interval=2,
+        width=512,
+        height=512,
+        seed=1234
+    )
     frames = []
 
     final_image = model.generate(request, on_frame=frames.append)
 
     assert isinstance(final_image, Image.Image)
     assert [frame.step for frame in frames] == [2, 4, 5]
+    assert [frame.final for frame in frames] == [False, False, True]
     assert all(isinstance(frame.image, Image.Image) for frame in frames)
-    assert fake_pipeline.calls[0]["prompt"] == "a fox"
-    assert fake_pipeline.calls[0]["num_inference_steps"] == 5
+
+    # Verify pipeline call arguments
+    call_args = fake_pipeline.calls[0]
+    assert call_args["prompt"] == "a fox"
+    assert call_args["negative_prompt"] == request.negative_prompt
+    assert call_args["width"] == 512
+    assert call_args["height"] == 512
+    assert call_args["num_inference_steps"] == 5
+    assert call_args["guidance_scale"] == request.guidance_scale
+    assert callable(call_args["callback_on_step_end"])
+    assert call_args["callback_on_step_end_tensor_inputs"] == ["latents"]
+    assert "generator" in call_args
 
 
 def test_decoded_frame_records_step_and_image():
@@ -46,3 +66,12 @@ def test_decoded_frame_records_step_and_image():
     assert frame.step == 3
     assert frame.image is image
     assert frame.final is False
+
+
+def test_decoded_frame_with_final_true():
+    image = Image.new("RGB", (8, 8), "white")
+    frame = DecodedFrame(step=5, image=image, final=True)
+
+    assert frame.step == 5
+    assert frame.image is image
+    assert frame.final is True
