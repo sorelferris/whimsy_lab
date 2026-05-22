@@ -1,14 +1,16 @@
 import pytest
-from diffusers import EulerDiscreteScheduler
 
 from image_gen_viz.schedulers import SCHEDULER_NAMES, create_scheduler
 
 
+class DummyConfig:
+    prediction_type = "epsilon"
+
+
 class DummyScheduler:
-    def __init__(self):
-        # Use a real scheduler's config dict
-        real_scheduler = EulerDiscreteScheduler()
-        self.config = real_scheduler.config
+    config = {
+        "prediction_type": "epsilon"
+    }
 
 
 def test_supported_scheduler_names_are_stable():
