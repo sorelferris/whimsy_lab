@@ -34,6 +34,27 @@ async def test_manager_streams_generation_events(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_manager_removes_queue_after_terminal_event_is_consumed(tmp_path):
+    manager = GenerationManager(storage=RunStorage(tmp_path), model=FakeModel())
+    run_id = await manager.start(GenerationRequest(prompt="a fox", steps=4, decode_interval=2))
+
+    async for event in manager.events(run_id):
+        if event.type == "complete":
+            break
+
+    assert run_id not in manager.queues
+
+
+@pytest.mark.asyncio
+async def test_manager_rejects_unknown_run_events(tmp_path):
+    manager = GenerationManager(storage=RunStorage(tmp_path), model=FakeModel())
+
+    with pytest.raises(ValueError, match="unknown run_id"):
+        async for _event in manager.events("missing"):
+            pass
+
+
+@pytest.mark.asyncio
 async def test_manager_rejects_concurrent_generation(tmp_path):
     class SlowModel:
         def generate(self, request, on_frame):

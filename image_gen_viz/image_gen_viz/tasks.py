@@ -31,12 +31,20 @@ class GenerationManager:
         return run.run_id
 
     async def events(self, run_id: str):
-        queue = self.queues[run_id]
-        while True:
-            event = await queue.get()
-            yield event
-            if event.type in {"complete", "error"}:
-                break
+        queue = self.queues.get(run_id)
+        if queue is None:
+            raise ValueError("unknown run_id")
+        try:
+            while True:
+                event = await queue.get()
+                if event.type in {"complete", "error"}:
+                    self.queues.pop(run_id, None)
+                    yield event
+                    break
+                yield event
+        finally:
+            if run_id in self.queues and queue.empty():
+                self.queues.pop(run_id, None)
 
     async def _run_generation(self, run_id: str, request: GenerationRequest, queue: asyncio.Queue[GenerationEvent]) -> None:
         loop = asyncio.get_running_loop()
