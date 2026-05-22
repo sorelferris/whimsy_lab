@@ -10,8 +10,15 @@ SCHEDULER_CLASSES = {
 }
 
 
+def _scheduler_config(current_scheduler: object) -> object:
+    config = current_scheduler.config
+    if isinstance(config, dict):
+        return config
+    return {name: value for name, value in vars(config.__class__).items() if not name.startswith("_") and not callable(value)}
+
+
 def create_scheduler(name: str, current_scheduler: object) -> object:
     scheduler_class = SCHEDULER_CLASSES.get(name)
     if scheduler_class is None:
         raise ValueError(f"Unsupported scheduler: {name}")
-    return scheduler_class.from_config(current_scheduler.config)
+    return scheduler_class.from_config(_scheduler_config(current_scheduler))

@@ -8,9 +8,7 @@ class DummyConfig:
 
 
 class DummyScheduler:
-    config = {
-        "prediction_type": "epsilon"
-    }
+    config = DummyConfig()
 
 
 def test_supported_scheduler_names_are_stable():
