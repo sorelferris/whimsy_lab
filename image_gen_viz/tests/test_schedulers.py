@@ -1,6 +1,6 @@
 import pytest
 
-from image_gen_viz.schedulers import SCHEDULER_NAMES, create_scheduler
+from image_gen_viz.schedulers import SCHEDULER_NAMES, create_scheduler, _scheduler_config
 
 
 class DummyConfig:
@@ -24,3 +24,20 @@ def test_create_scheduler_returns_new_scheduler_instance():
     scheduler = create_scheduler("euler", DummyScheduler())
 
     assert scheduler.__class__.__name__ == "EulerDiscreteScheduler"
+
+
+def test_scheduler_config_preserves_instance_attributes():
+    class InstanceConfig:
+        prediction_type = "epsilon"
+
+        def __init__(self):
+            self.num_train_timesteps = 500
+            self.prediction_type = "v_prediction"
+
+    class InstanceScheduler:
+        config = InstanceConfig()
+
+    config = _scheduler_config(InstanceScheduler())
+
+    assert config["num_train_timesteps"] == 500
+    assert config["prediction_type"] == "v_prediction"
