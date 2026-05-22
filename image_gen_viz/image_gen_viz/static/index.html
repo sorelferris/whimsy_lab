@@ -4,8 +4,55 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Image Gen Viz</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
   </head>
   <body>
-    <main id="app">Image Gen Viz</main>
+    <main class="app-shell">
+      <section class="panel controls">
+        <h1>Image Gen Viz</h1>
+        <p>Visualize Stable Diffusion denoising steps.</p>
+        <div id="error" class="error" hidden></div>
+        <form id="generate-form">
+          <label>Prompt<textarea name="prompt" required>a cinematic red fox in a snowy forest</textarea></label>
+          <label>Negative Prompt<textarea name="negative_prompt">blurry, low quality</textarea></label>
+          <div class="grid">
+            <label>Seed<input name="seed" type="number" value="0" min="0" /></label>
+            <label>Steps<input name="steps" type="number" value="20" min="1" max="150" /></label>
+            <label>Guidance<input name="guidance_scale" type="number" value="7.5" min="0" max="30" step="0.1" /></label>
+            <label>Decode Interval<input name="decode_interval" type="number" value="4" min="1" /></label>
+            <label>Width<input name="width" type="number" value="512" min="128" max="1024" step="8" /></label>
+            <label>Height<input name="height" type="number" value="512" min="128" max="1024" step="8" /></label>
+          </div>
+          <label>Scheduler
+            <select name="scheduler">
+              <option value="euler">Euler</option>
+              <option value="euler_a">Euler ancestral</option>
+              <option value="ddim">DDIM</option>
+              <option value="dpmpp_2m">DPM++ 2M</option>
+            </select>
+          </label>
+          <label>Model ID<input name="model_id" value="runwayml/stable-diffusion-v1-5" /></label>
+          <button id="generate-button" type="submit">Generate</button>
+        </form>
+        <form id="load-form" class="load-run">
+          <label>Reload Run ID<input name="run_id" /></label>
+          <button type="submit">Load Run</button>
+        </form>
+      </section>
+      <section class="panel viewer">
+        <div class="status-row">
+          <span id="status">Idle</span>
+          <progress id="progress" value="0" max="100"></progress>
+        </div>
+        <img id="preview" alt="Current decoded frame" />
+        <div class="playback">
+          <button id="play-button" type="button">Play</button>
+          <input id="scrubber" type="range" min="0" max="0" value="0" />
+          <span id="frame-label">No frames</span>
+        </div>
+        <div id="timeline" class="timeline"></div>
+      </section>
+    </main>
+    <script src="/assets/app.js"></script>
   </body>
 </html>

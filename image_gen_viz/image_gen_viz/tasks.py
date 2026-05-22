@@ -10,7 +10,7 @@ from image_gen_viz.validation import GenerationRequest
 
 
 class ModelService(Protocol):
-    def generate(self, request: GenerationRequest, on_frame) -> Image.Image:
+    def generate(self, request: GenerationRequest, on_frame, on_progress=None) -> Image.Image:
         ...
 
 
@@ -54,12 +54,15 @@ class GenerationManager:
         def emit(event: GenerationEvent) -> None:
             loop.call_soon_threadsafe(queue.put_nowait, event)
 
+        def on_progress(step: int) -> None:
+            emit(GenerationEvent.progress(run_id, step, request.steps))
+
         def on_frame(frame: DecodedFrame) -> None:
             saved = self.storage.save_frame(run_id, frame.step, frame.image, frame.final)
             emit(GenerationEvent.frame(run_id, saved.step, saved.url, saved.final))
 
         try:
-            final_image = await asyncio.to_thread(self.model.generate, request, on_frame)
+            final_image = await asyncio.to_thread(self.model.generate, request, on_frame, on_progress)
             metadata = self.storage.load_run(run_id)
             if metadata["final_image"] is None:
                 saved = self.storage.save_frame(run_id, request.steps, final_image, True)

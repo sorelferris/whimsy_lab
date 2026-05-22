@@ -61,6 +61,20 @@ def test_model_emits_decoded_frames_at_interval(monkeypatch):
     assert "generator" in call_args
 
 
+def test_model_reports_each_generation_step(monkeypatch):
+    fake_pipeline = FakePipeline()
+    monkeypatch.setattr("image_gen_viz.model.load_pipeline", lambda model_id: fake_pipeline)
+    monkeypatch.setattr("image_gen_viz.model.create_scheduler", lambda name, current: current)
+    model = StableDiffusionModel(device="cuda")
+    request = GenerationRequest(prompt="a fox", steps=5, decode_interval=2)
+    steps = []
+
+    model.generate(request, on_frame=lambda frame: None, on_progress=steps.append)
+
+    assert steps == [1, 2, 3, 4, 5]
+
+
+
 def test_model_uses_cpu_generator_when_cuda_is_unavailable(monkeypatch):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     fake_pipeline = FakePipeline()

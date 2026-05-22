@@ -32,13 +32,20 @@ class StableDiffusionModel:
         self.pipeline: StableDiffusionPipeline | None = None
         self.loaded_model_id: str | None = None
 
-    def generate(self, request: GenerationRequest, on_frame: Callable[[DecodedFrame], None]) -> Image.Image:
+    def generate(
+        self,
+        request: GenerationRequest,
+        on_frame: Callable[[DecodedFrame], None],
+        on_progress: Callable[[int], None] | None = None,
+    ) -> Image.Image:
         pipeline = self._pipeline(request.model_id)
         pipeline.scheduler = create_scheduler(request.scheduler, pipeline.scheduler)
         generator = torch.Generator(device=self._generator_device()).manual_seed(request.seed)
 
         def callback_on_step_end(pipe, step_index, timestep, callback_kwargs):
             step = step_index + 1
+            if on_progress is not None:
+                on_progress(step)
             if should_decode_step(step, request.steps, request.decode_interval):
                 image = self._decode_latents(pipe, callback_kwargs["latents"])
                 on_frame(DecodedFrame(step=step, image=image, final=step == request.steps))
