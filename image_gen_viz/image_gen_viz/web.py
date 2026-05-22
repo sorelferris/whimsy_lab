@@ -36,11 +36,16 @@ def create_app(manager: GenerationManager | None = None, runs_dir: Path = RUNS_D
     def get_run(run_id: str):
         try:
             return storage.load_run(run_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="invalid run_id") from exc
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="run not found") from exc
 
     @app.get("/api/runs/{run_id}/events")
     async def run_events(run_id: str):
+        if run_id not in generation_manager.queues:
+            raise HTTPException(status_code=404, detail="run not found")
+
         async def stream():
             async for event in generation_manager.events(run_id):
                 yield format_sse(event)

@@ -37,6 +37,28 @@ def test_get_run_returns_saved_metadata(tmp_path):
     assert response.json()["request"]["prompt"] == "a fox"
 
 
+def test_get_run_rejects_invalid_run_id(tmp_path):
+    manager = GenerationManager(RunStorage(tmp_path), FakeModel())
+    app = create_app(manager=manager, runs_dir=tmp_path)
+    client = TestClient(app)
+
+    response = client.get("/api/runs/not-a-run-id")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "invalid run_id"
+
+
+def test_run_events_rejects_unknown_run_id(tmp_path):
+    manager = GenerationManager(RunStorage(tmp_path), FakeModel())
+    app = create_app(manager=manager, runs_dir=tmp_path)
+    client = TestClient(app)
+
+    response = client.get("/api/runs/missing/events")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "run not found"
+
+
 def test_static_index_is_served(tmp_path):
     manager = GenerationManager(RunStorage(tmp_path), FakeModel())
     app = create_app(manager=manager, runs_dir=tmp_path)
