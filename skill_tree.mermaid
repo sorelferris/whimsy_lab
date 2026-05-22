@@ -1,0 +1,116 @@
+mindmap
+  root((机器人算法开发))
+    数据采集与处理
+      数据录制
+        ros topic 实时录制
+        遥操数据采集
+        支持多相机（ego_view/hand_camera）
+        基于 LeRobot 框架二次开发
+      数据预处理
+        rosbag → LeRobot Dataset 转换脚本
+        数据清洗
+          间隔跳帧
+          过滤无操作帧
+        版本升级转换 v2.1 → v3.0
+        格式导出
+          HDF5
+          RLDS
+      数据集工具开发
+        版本无关性批量合并工具
+          避免重编码视频
+          处理效率 小时级 → 秒级
+          自动重索引、自动计算归一化统计量
+        数据平台搭建
+          phosphobot 部署
+          提供 Web 操作界面
+    模型训练与适配
+      主流 VLA 模型
+        pi05/OpenPi
+          全流程训练微调
+          推理服务适配
+          真机验证
+        ACT (Action Chunking Transformer)
+          训练部署
+          推理速度优化 10Hz → 25Hz
+        smolvla
+        WorldVLA/RynnVLA
+          数据准备全流程
+          多卡训练环境适配
+        支持 LoRA/全量微调对比
+      训练工程
+        多 GPU 训练配置
+          解决 OOM 问题
+          多卡并行
+        不同硬件适配
+          RTX 3090/4090
+          A800
+          Pro6000 (Blackwell 架构)
+          Orin 端侧
+        训练监控
+          wandb/swanlab
+          损失函数追踪
+      硬件兼容问题解决
+        解决 torch 版本与 CUDA 架构兼容问题
+        flash-attn 版本匹配
+    推理部署与优化
+      推理服务架构
+        同步推理 → 异步推理架构改造
+        策略服务设计
+          ZeroMQ 低延迟通信 (延迟 ~10ms)
+          FastAPI 轻量级服务包装
+          WebSocket 方案对比
+        支持多模型热切换
+      动作生成优化
+        Temporal Ensembler 异步合成
+        Real-Time Chunking 实现
+          解决动作抖动问题
+          牺牲小部分延迟换取稳定性
+        指数加权平均动作聚合
+      端侧部署
+        Orin 开发板环境配置
+        推理延迟优化
+        真机闭环验证
+      可视化
+        Rerun 远程推送可视化
+        rviz 关节状态可视化
+    机器人系统集成
+      硬件对接
+        ROS 2 接口适配
+          关节状态订阅
+          动作指令下发
+        UMI 鱼眼相机接入
+          OpenCV 视频流读取
+        双臂机器人改造适配
+      通信中间件
+        ZeroMQ 客户端-服务器架构
+        动作序列传输协议设计
+      实机调试
+        观测数据格式对齐
+        推理成功率验证
+        问题排查与调优
+    前沿技术调研
+      领域发展跟踪
+        最新论文精读
+          DreamZero (NVIDIA GEAR Lab)
+          Spirit v1.5
+          GEN-0
+          RECAP (VLA+RL)
+        VLA 发展脉络梳理
+        核心观点总结
+          "脏数据" > 干净数据 (Spirit)
+          自回归 > 双向扩散 (DreamZero)
+      算法方向探索
+        VLA + RL 结合
+          RECAP 框架
+          Flow matching + RL
+        世界模型
+          WorldVLA 图像预测
+        轻量化 VLA
+          SmolVLA
+    工程能力
+      版本控制 Git
+      环境管理 conda/uv
+      容器化 Docker
+      可视化 Rerun/matplotlib
+      文献管理 Zotero
+      问题调试 源码级排查
