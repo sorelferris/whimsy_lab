@@ -35,7 +35,7 @@ class StableDiffusionModel:
     def generate(self, request: GenerationRequest, on_frame: Callable[[DecodedFrame], None]) -> Image.Image:
         pipeline = self._pipeline(request.model_id)
         pipeline.scheduler = create_scheduler(request.scheduler, pipeline.scheduler)
-        generator = torch.Generator(device=self.device).manual_seed(request.seed)
+        generator = torch.Generator(device=self._generator_device()).manual_seed(request.seed)
 
         def callback_on_step_end(pipe, step_index, timestep, callback_kwargs):
             step = step_index + 1
@@ -62,6 +62,11 @@ class StableDiffusionModel:
             self.pipeline = load_pipeline(model_id).to(self.device)
             self.loaded_model_id = model_id
         return self.pipeline
+
+    def _generator_device(self) -> str:
+        if self.device == "cuda" and not torch.cuda.is_available():
+            return "cpu"
+        return self.device
 
     def _decode_latents(self, pipe, latents) -> Image.Image:
         if isinstance(latents, str):
