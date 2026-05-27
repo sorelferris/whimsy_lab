@@ -1,183 +1,204 @@
-# VLA 超级马里奥兄弟 — 设计规格
+# VLA 超级马里奥兄弟 — 设计规格 (NitroGen 版)
 
-> 设计版本: 1.0
-> 日期: 2026-05-26
+> 设计版本: 2.0
+> 日期: 2026-05-27
 > 状态: 待用户审查
 
 ## 1. 背景与目标
 
-实现一个基于 VLM（视觉语言模型）的 VLA（Vision-Language-Action）智能体，能够玩 Super Mario Bros World 1-4。
+基于 NVIDIA [NitroGen](https://github.com/MineDojo/NitroGen) 基础模型，实现能玩 Super Mario Bros World 1-4 的游戏 AI agent。
 
 **核心目标**：
 - 性能极限：追求最高通关率和得分
 - 推理扩展性：专为 RTX 3080（10GB VRAM）优化推理部署
-- 可视化：支持 Chain-of-Thought 推理过程可视化
+- 可视化：Flow Matching 推理过程可视化
 
 **成功指标**：
-- World 1-4 综合通关率 > 80%
-- 单帧推理延迟 < 100ms (p95)
-- 支持 8 并行 batch 推理
+- World 1-4 综合通关率 > 70%（NitroGen 基线能力 + post-training 适配）
+- 单帧推理延迟 < 200ms (p95)（含 16 步扩散采样）
+- 模型占用 < 8GB VRAM（INT8 量化后）
 
 ---
 
 ## 2. 整体架构
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  SMB Game (gym-retro)                                   │
-│    └─► Observation (frame + state)                    │
-│         │                                               │
-│         ▼                                               │
-│  ┌─────────────────┐     ┌──────────────────────────┐ │
-│  │  VLM (MiniCPM-V │────►│  Action + Reasoning Trace│ │
-│  │   2.8B + QLoRA) │     └──────────┬───────────────┘ │
-│  └─────────────────┘                │                  │
-│                          ┌──────────▼──────────┐       │
-│                          │  Fast Policy Head   │       │
-│                          │  (parallel fallback) │       │
-│                          └──────────┬──────────┘       │
-│                                     ▼                   │
-│                          ┌─────────────────────┐        │
-│                          │  CoT 可视化层       │        │
-│                          │  (实时 + 调试模式) │        │
-│                          └─────────────────────┘        │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│  Linux (RTX 3080)                      Windows (游戏机)         │
+│  ┌────────────────────────┐          ┌──────────────┐     │
+│  │  NitroGen DiT (500M)   │──ZMQ────►│ GamepadEmulator│    │
+│  │  + SigLIP Vision Encoder│          │ (手柄模拟)    │    │
+│  │  + Flow Matching        │          └───────┬──────┘    │
+│  │  + CFG (cfg=1.5)       │◄─────────────── screenshot   │
+│  └────────────────────────┘          dxcam 截屏            │
+│       │                                              │      │
+│       ▼                                              ▼      │
+│  ┌─────────────────┐               ┌──────────────────┐  │
+│  │ Flow 可视化层   │               │ xspeedhack 注入   │  │
+│  │ (推理步数/隐变量│               │ (精确控制游戏节奏)│  │
+│  │  实时展示)       │               └──────────────────┘  │
+│  └─────────────────┘                                     │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 **核心思路**：
-- VLM 负责高level推理（场景理解、策略规划）
-- Fast Policy Head 处理亚帧级快速反应
-- CoT 层记录推理过程供可视化
+- 复用 NitroGen 预训练 500M DiT 基座（已从互联网视频学习通用游戏行为）
+- Windows 端运行游戏，通过 ZMQ 与 Linux 推理端通信
+- Flow Matching 推理过程可视化（diffusion step 隐变量可视化）
+- Post-training 微调适配 SMB
 
 ---
 
 ## 3. 组件规格
 
-### 3.1 VLM 模块
+### 3.1 模型架构（直接复用 NitroGen）
 
-**模型选择**：MiniCPM-V 2.8B（本地可跑，量化友好）
+**模型选择**：NitroGen 预训练模型 + SMB post-training 微调
 
-**输入格式**：
-```
-文本: "You are a SMB expert. Given the screen, predict the action.
-       Available actions: ←, →, ↑, ↓, A, B, ←+A, →+A, ↑+A, ↑+B, ↓+A, idle
-       Also explain your reasoning briefly."
-
-图像: 原始画面 resize 到 384×384
-```
-
-**输出格式**：
-```
-Action: →+A
-Reasoning: "前方3格有坑，需要跳跃通过。同时跳起可以顶碎上方砖块获取金币。"
-```
-
-**QLoRA 配置**：
-- LoRA rank: 64, alpha: 128, dropout: 0.05
-- Target modules: q_proj, k_proj, v_proj, o_proj
-- 训练精度: BF16 主干 + INT4 LoRA
-- 训练数据: 200K SMB 帧-动作对 + 30K 人类通关轨迹
-
-### 3.2 Fast Policy Head
-
-**目的**：处理需要亚帧级响应的场景（躲避炮弹、跳出包围等），延迟 <5ms。
-
-**架构**：
-```
-输入: 原始画面 → 小型 CNN (3层) → 128-d embedding
-      控制器状态 → 线性层 → 32-d embedding
-      concat → 160-d → 3层 MLP → 12-d action logits
-
-动作空间（12维）：
-← → ↑ ↓ A B A+B ↑+A ↑+B ↓+A ↓+B （←+→禁止同按）
+**核心配置**：
+```python
+model_cfg = NitroGen_Config(
+    hidden_size=1024,
+    diffusion_model_cfg: DiTConfig(
+        num_layers=12,
+        num_attention_heads=16,
+        attention_head_dim=64,
+        output_dim=26,        # buttons(13) + joystick(13)
+        max_num_positional_embeddings=512,
+    ),
+    vl_self_attention_cfg: SelfAttentionTransformerConfig(...),
+    vision_encoder_name="google/siglip-large-patch16-256",
+    num_inference_timesteps=16,  # 扩散步数
+    noise_beta_alpha=1.5,
+    noise_beta_beta=1.0,
+    noise_s=0.999,
+)
 ```
 
-**训练**：从 VLM 的 action distribution 中蒸馏，KL散度 loss
-**推理**：与 VLM 并行执行，最终 action = VLM_action × 0.7 + FastPolicy_action × 0.3
-
-### 3.3 训练流程
-
-**数据采集**：
-- 人类玩家游玩 SMB World 1-4
-- 记录 (frame, controller_state, action, reasoning)
-- 约 30K 人类轨迹 + 200K 自动增强帧
-
-**Stage 1 - CoT 微调（4-6小时，单卡 RTX 3080）**：
+**动作空间（26维 continuous）**：
 ```
-基础 VLM + QLoRA (rank=64)
-训练目标: 最大化 P(action | frame, reasoning)
-Loss = CE(action) + λ * CE(reasoning), λ=0.3
-Learning rate: 2e-4, warmup 100步, cosine decay
-Batch: 4, Gradient accumulation: 16 → effective 64
+buttons: BACK, GUIDE, LEFT_SHOULDER, RIGHT_SHOULDER,
+         WEST(A), SOUTH(B), EAST(X), NORTH(Y),
+         START, DPAD_UP/DOWN/LEFT/RIGHT,
+         LEFT_TRIGGER, RIGHT_TRIGGER
+
+joystick: AXIS_LEFTX/Y, AXIS_RIGHTX/Y
 ```
 
-**Stage 2 - Reward Shaping（2-3小时）**：
+**视觉编码器**：SigLIP-L（google/siglip-large-patch16-256）
+
+### 3.2 推理流程
+
+**Flow Matching 推理**（16 步）：
 ```
-PPO 风格优化
-Reward: +10 通关, +1 存活秒, +5 收集金币, -100 死亡
-同时用 VLM 自身的 reasoning 作为 auxiliary loss
+1. 编码当前帧 → SigLIP visual tokens
+2. 编码 game conditioning token（SMB 专属）
+3. 双路 CFG:
+   - 有条件分支: frame + game_id → 预测 action
+   - 无条件分支: frame (game=None) → 预测 null action
+   - 合并: output = cfg * cond - (cfg-1) * uncond, cfg_scale=1.5
+4. 16 步迭代去噪 → continuous action (26d)
+5. 离散化手柄按钮 + 连续摇杆值
 ```
 
-### 3.4 CoT 可视化层
+**每帧推理延迟拆解**：
+```
+SigLIP 编码:     ~30ms
+DiT 16步扩散:    ~120ms (BF16, RTX 3080)
+CFG 双路:        ×2 倍计算
+---
+总计:            ~150ms (可优化到 <200ms)
+```
 
-**实时覆盖模式**（默认）：
+### 3.3 Post-training 微调（适配 SMB）
+
+**Stage 1 - SMB 数据微调**（核心）：
+```
+数据: SMB World 1-4 人类通关轨迹
+      + NitroGen 原有互联网游戏数据中涉及平台跳跃的片段
+训练: QLoRA on DiT (rank=64, target q/k/v/o proj)
+目标: 让模型适应 SMB 的特定动作模式（跳跃时长、敌人躲避等）
+Loss: Flow Matching MSE + action head CE
+Duration: 4-6h 单卡 RTX 3080
+```
+
+**Stage 2 - Reward Shaping**（可选）：
+```
+目标: 最大化金币收集 + 快速通关
+Reward: +1 每秒存活, +5 每金币, +50 通关, -100 死亡
+方法: 离线 RL（保守的 PPO），在微调模型基础上继续优化
+```
+
+### 3.4 Flow 可视化层
+
+**实时覆盖模式**：
 ```
 ┌──────────────────────────────────────┐
 │  [游戏画面]                          │
 │                                       │
 │  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │
-│  ░ VLM推理:                          ░
-│  ░ "前方3格有砖块，               ░
-│  ░  跳起可顶出金币。              ░
-│  ░  同时能越过前方敌人"          ░
-│  ░  → Action: →+A (跳跃前进)     ░
+│  ░ Flow Matching:                  ░
+│  ░  Step 8/16 [████████░░░░] 50%  ░
+│  ░  Noise σ=0.3 → Action cos=0.82 ░
+│  ░  [→] [A] (RB+LT) confidence=88% ░
 │  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │
 └──────────────────────────────────────┘
 ```
-- 半透明黑底，白色字体，3行精简输出
-- 更新频率: 每5帧更新一次（减少闪烁）
+
+- 显示当前 diffusion 步数 / 总步数
+- 可选：展示隐变量 t-SNE 可视化（每步的隐空间轨迹）
+- Action 按钮高亮（哪些按键被激活）
+- 置信度（CFG 后的 action confidence）
 
 **调试模式**（按 D 键切入）：
 ```
-┌─────────────┬──────────────────────────┐
-│ 游戏画面    │ VLM Chain-of-Thought:    │
-│             │                          │
-│             │ [1] 场景分析              │
-│             │   检测到: 坑(2格宽)       │
-│             │         砖块(上方)       │
-│             │         敌人(右方3格)    │
-│             │                          │
-│             │ [2] 策略生成              │
-│             │   选项A: 跳过坑           │
-│             │   选项B: 踩砖跳          │
-│             │   ✓ 选项B (最高分)        │
-│             │                          │
-│             │ [3] 动作输出              │
-│             │   → + A (持续0.5s)        │
-│             │   confidence: 0.94        │
-├─────────────┴──────────────────────────┤
-│ [暂停] [步进] [单帧前进] [重置]        │
-└─────────────────────────────────────────┘
+┌─────────────┬────────────────────────────────┐
+│ 游戏画面    │ Flow Matching Debug:           │
+│             │                                │
+│             │ [1] Visual Encoding            │
+│             │   SigLIP: 576 tokens           │
+│             │   game_id: SMB (embedding: 0.3)│
+│             │                                │
+│             │ [2] CFG Branches               │
+│             │   cond: [0.2, 0.8, 0.1, ...]   │
+│             │   null:  [0.1, 0.4, 0.1, ...]  │
+│             │   cfg=1.5 → blended            │
+│             │                                │
+│             │ [3] Diffusion Steps            │
+│             │   t=0.8: noise=high, act=init  │
+│             │   t=0.5: action emerging       │
+│             │   t=0.2: action refining       │
+│             │   t=0.0: final action          │
+│             │                                │
+│             │ [4] Action Output              │
+│             │   buttons: [→, A, LB]          │
+│             │   j_left: (1.0, 0.0)           │
+│             │   confidence: 0.91             │
+├─────────────┴────────────────────────────────┤
+│ [暂停] [步进] [单帧前进] [重置] [CFG调参]   │
+└──────────────────────────────────────────────┘
 ```
 
 ### 3.5 推理优化（RTX 3080 专项）
 
-**目标**：在 10GB VRAM 约束下实现最低延迟和最大 batch 吞吐。
-
-**优化层次**：
-
 | 层次 | 优化项 | 预期效果 |
 |------|--------|---------|
-| 量化 | FP16 → INT8 GPTQ → INT4 | 模型 3B→1.5GB，延迟 -40% |
-| KV Cache | PagedAttention，帧间复用 | 峰值显存 -60% |
-| Batch | 预填充 8并行，continuous batching | 吞吐 30+ FPS |
-| CUDA | FlashAttention-2，4-bit 核函数 | 显存对齐减少碎片 |
+| 量化 | BF16 → INT8 GPTQ | 显存 500M→250M，延迟 -30% |
+| 采样 | 16步 → 8步（截断） | 延迟 -50%，质量损失 <5% |
+| Batch | Continuous batching | 吞吐 ×2-3 |
+| CFG | cfg=1.5 → cfg=1.2 | 延迟 -15%，质量损失 <2% |
+| Flash | FlashAttention-2 | 显存 -20%，延迟 -15% |
 
 **预期性能**：
-- 模型加载: ~2GB (INT4)
-- 单帧推理延迟: 30-50ms (VLM) + 2ms (Policy)
-- 游戏帧率: 30+ FPS (可玩)
-- Batch 吞吐: 8 并行请求，延迟 <100ms (p95)
+- 模型加载: ~500MB (INT8) - 1GB (FP16)
+- 单帧推理延迟: 80-120ms (INT8 + 8步采样)
+- 游戏帧率: 10+ FPS（原生）；可优化到 15-20 FPS
+
+**RTX 3080 约束下的最优配置**：
+```
+INT8 量化 + 8步采样 + CFG=1.2 + FlashAttention
+= ~100ms 延迟 + ~2GB VRAM
+```
 
 ---
 
@@ -185,49 +206,77 @@ Reward: +10 通关, +1 存活秒, +5 收集金币, -100 死亡
 
 | 组件 | 技术选型 |
 |------|---------|
-| 游戏环境 | gym-retro (SMB) |
-| VLM 基座 | MiniCPM-V 2.8B |
-| 微调框架 | transformers + peft (QLoRA) |
-| 推理优化 | vLLM (PagedAttention, continuous batching) |
-| 可视化 | Pygame overlay / OpenCV |
-| 训练 | 单卡 RTX 3080, ~8-12 小时 |
+| 基础模型 | NitroGen 500M DiT (GitHub/MineDojo) |
+| 视觉编码器 | SigLIP-L (HuggingFace) |
+| 游戏环境 | Windows + gym-retro 替代方案：dxcam 截屏 + vgamepad |
+| 通信 | ZMQ (推理 server ←→ 游戏 client) |
+| 微调 | transformers + peft (QLoRA) |
+| 可视化 | OpenCV overlay |
+| 训练 | 单卡 RTX 3080 |
 
 ---
 
 ## 5. 项目结构
 
 ```
-vla-mario/
-├── train/                  # 训练代码
-│   ├── data_collection.py  # 数据采集
-│   ├── sft_trainer.py      # Stage 1 微调
-│   └── rl_trainer.py       # Stage 2 PPO
-├── inference/              # 推理部署
-│   ├── vlm_engine.py       # VLM 推理引擎
-│   ├── policy_head.py      # Fast Policy
-│   └── coT_visualizer.py   # CoT 可视化层
-├── configs/                # 配置文件
-│   ├── model.yaml          # 模型配置
-│   ├── train.yaml          # 训练配置
-│   └── inference.yaml      # 推理配置
-├── eval/                   # 评估
-│   └── benchmark.py        # World 1-4 评测
-└── main.py                 # 入口
+nitrogen-mario/
+├── nitrogen/                   # Forked from NitroGen
+│   ├── flow_matching_transformer/
+│   │   ├── nitrogen.py         # Core DiT model
+│   │   └── modules.py          # DiT / Transformer blocks
+│   ├── game_env.py             # Windows game interface
+│   ├── inference_session.py    # Inference orchestration
+│   ├── inference_client.py     # ZMQ client (Windows side)
+│   ├── inference_viz.py        # Flow visualization
+│   ├── mm_tokenizers.py        # Multi-modal tokenizer
+│   ├── cfg.py                  # Config classes
+│   └── shared.py               # Shared utilities
+├── scripts/
+│   ├── serve.py                # Linux: model inference server
+│   ├── play.py                 # Windows: game agent runner
+│   └── download_ckpt.py        # Download NitroGen checkpoint
+├── train/
+│   ├── sft_trainer.py          # Stage 1: SMB post-training
+│   └── rl_trainer.py           # Stage 2: Reward shaping
+├── eval/
+│   └── benchmark.py            # World 1-4 evaluation
+├── configs/
+│   ├── nitrogen.yaml           # NitroGen model config
+│   ├── smb_finetune.yaml       # SMB post-training config
+│   └── inference.yaml          # Inference optimization config
+└── main.py                     # Entry point
 ```
 
 ---
 
 ## 6. 实现计划（待 writing-plans 阶段展开）
 
-1. 环境搭建：gym-retro + 游戏 ROM + 基线随机策略验证
-2. 数据采集：人类玩家轨迹 + 自动增强
-3. Stage 1 微调：VLM QLoRA + CoT
-4. Fast Policy Head：蒸馏训练 + 并行推理
-5. 推理优化：INT8/INT4 量化 + vLLM 集成
-6. CoT 可视化：实时覆盖层 + 调试模式
-7. Stage 2 RL：Reward Shaping 优化
-8. 评估：World 1-4 全通关率测试
+1. **Fork & 环境搭建**：克隆 NitroGen，配置 Windows + Linux 双端环境
+2. **基线验证**：下载 NitroGen 预训练模型，在 SMB 上跑通基线（无需微调）
+3. **游戏环境适配**：用 dxcam 截取 SMB 画面，vmgamepad 模拟手柄输入
+4. **Flow 可视化**：实现扩散步数/隐变量/Action 可视化覆盖层
+5. **Post-training 微调**：SMB 数据 QLoRA 微调（4-6h）
+6. **推理优化**：INT8 量化 + 8步采样 + CFG 调参
+7. **Reward Shaping**：PPO 离线强化学习优化（可选）
+8. **评估**：World 1-4 通关率测试
 
 ---
 
-*设计已 commit，等待用户审查后进入实现计划阶段。*
+## 7. 与原版设计的关键差异
+
+| | 原版（VLM 自回归）| 本版（NitroGen）|
+|---|---|---|
+| 架构 | MiniCPM-V + 自回归 | DiT + Flow Matching |
+| 视觉 | MiniCPM-V 内置 | SigLIP-L（独立编码器）|
+| CoT/可视化 | VLM reasoning text | Diffusion step 隐变量 |
+| 游戏环境 | gym-retro（跨平台）| Windows + dxcam（依赖平台）|
+| 泛化 | 微调后专精 SMB | 预训练泛化多游戏 + post-training |
+| 训练数据 | 自己采集 | 互联网视频预训练 + SMB 微调 |
+| 推理延迟 | 30-50ms (VLM) | 80-120ms (DiT 16步) |
+| 模型大小 | 3B | 500M（更易部署）|
+
+*NitroGen 的局限：只看当前帧（无 temporal planning），是 fast-reacting system-1 模型。SMB 的关卡跳转、隐藏砖块等需要长期规划的场景仍需额外处理。*
+
+---
+
+*设计已更新为 v2.0（基于 NitroGen），等待用户审查后进入实现计划阶段。*
